@@ -119,7 +119,6 @@ else
 
         #NOTE: username isn't strictly the right wording for EXPN
         echo -e "EXPN ${userName}"  >&$fd
-        echo "test 2 ${readSuccess}"
         readFD "EXPN"
         EXPN=${readSuccess}
 
