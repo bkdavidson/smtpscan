@@ -49,13 +49,17 @@ if [ ! "${ip}" ] ; then
 fi
 shift $((OPTIND-1))
 
+function testConnectionAttempt(){
+    rc=${1}
+    message=${2}
+    if test ${rc} != 0 ; then
+        logerror ${message}
+        exit 1
+fi
+}
 #test connection
 timeout 10 bash -c "</dev/tcp/${ip}/${smtp_port}"
-if test $? != 0 ; then
-    logerror "ERROR: ${ip}:${smtp_port} is not open"
-    exit 1
-fi
-
+testConnectionAttempt $? "ERROR: ${ip}:${smtp_port} is not open!"
 vrfy_users="$@"
 debug "vrfy_users ${vrft_users}"
 debug "Opening smptp"
@@ -68,11 +72,7 @@ unset fd
 
 
 eval 'exec {fd}<>/dev/tcp/"${ip}"/"${smtp_port}"'  2>/dev/null
-
-if test $? != 0 ; then
-    logerror "ERROR: cannot open connection"
-   exit 1
-fi
+testConnectionAttempt $? "ERROR: cannot open connection"
 
 
 function cleanup(){
@@ -104,10 +104,7 @@ else
     echo "Connection established: ${ip} ${smtp_port}"
     trap "cleanup" HUP INT TERM EXIT QUIT
     read  -t 120 -r messageIn <&$fd
-    if test $? != 0 ; then
-       logerror "ERROR: cannot open connection"
-       exit 1
-    fi
+    testConnectionAttempt $? "ERROR: no incoming data from connection"
     echo "Received:: ${ip} ${smtp_port} $messageIn"
     VRFY=true
     EXPN=true
