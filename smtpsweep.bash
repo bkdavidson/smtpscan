@@ -14,10 +14,19 @@ smtp_port=25
 compressed=false
 fileopencommand="cat"
 skipInitialTest=false
-while getopts "i:s:dw:za:S" o; do
+interval=240
+while getopts "i:s:dw:za:SI:" o; do
     case "${o}" in
         i)
             ip="${OPTARG}"
+            ;;
+        I)
+            interval="${OPTARG}"
+            if [[ ${interval//[0-9]} = "" ]] ; then
+                if [[ ${interval} -gt 239  ||  ${interval} -lt 1 ]]; then echo "ERROR: -I should be between 1 and 240" && exit 1; fi
+            else
+                echo "ERROR: -I should contain only digits" && exit 1
+            fi
             ;;
         s)
             smtp_port="${OPTARG}"
@@ -94,8 +103,9 @@ exit
 messageIn=""
 readSuccess=""
 function readFD(){
+    readSuccess=true
     verb=${1}
-    read -t 240 -r messageIn <&$fd
+    read -t ${interval} -r messageIn <&$fd
     if  [[ $? != 0  || ${messageIn^^} =~ "ERROR" ]]   ; then
         echo "${verb} does not work on ${ip} ${smtp_port}"
         readSuccess=false
@@ -117,7 +127,7 @@ if test -z "$fd" ; then
 else
     echo "Connection established: ${ip} ${smtp_port}"
     trap "cleanup" HUP INT TERM EXIT QUIT
-    read  -t 120 -r messageIn <&$fd
+    read  -t ${interval} -r messageIn <&$fd
     testConnectionAttempt $? "ERROR: no incoming data from connection"
     echo "Received:: ${ip} ${smtp_port} $messageIn"
     VRFY=true
