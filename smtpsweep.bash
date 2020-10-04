@@ -3,20 +3,36 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 . ${DIR}/common.bash
 function usage(){
-    echo "Usage: $0 -i <ip> -w [wordlist raw text] -z [flag for wordlist is compressed targz] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode]"
+    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -z [flag for wordlist is compressed targz] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode] [-S skip initial connection attempt for dev only]"
+    echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com test admin root username1"
+    echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.gz -z"
+    echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.txt"
     exit 1
 }
 users=root
 smtp_port=25
 compressed=false
 fileopencommand="cat"
-while getopts "i:s:dw:z" o; do
+skipInitialTest=false
+interval=240
+while getopts "i:s:dw:za:SI:" o; do
     case "${o}" in
         i)
             ip="${OPTARG}"
             ;;
+        I)
+            interval="${OPTARG}"
+            if [[ ${interval//[0-9]} = "" ]] ; then
+                if [[ ${interval} -gt 239  ||  ${interval} -lt 1 ]]; then echo "ERROR: -I should be between 1 and 240" && exit 1; fi
+            else
+                echo "ERROR: -I should contain only digits" && exit 1
+            fi
+            ;;
         s)
             smtp_port="${OPTARG}"
+            ;;
+        a)
+            domain="${OPTARG}"
             ;;
         d)
             debug=true
@@ -26,6 +42,10 @@ while getopts "i:s:dw:z" o; do
             ;;
         z) 
             fileopencommand="zcat"
+            ;;
+        S)
+            #option for dev purposes only
+            skipInitialTest=true
             ;;
         *)
             usage
@@ -43,13 +63,19 @@ if [ ! "${ip}" ] ; then
 fi
 shift $((OPTIND-1))
 
-if [ $(nmap -p ${smtp_port} ${ip} -sS -oG /dev/stdout | grep Host.*open | awk '{print $2}' | wc -l) -eq 1 ] ; then
-    debug "nmap detected ${ip}:${smtp_port} as open"
-else
-    logerror "ERROR: ${ip}:${smtp_port} is not open"
-    exit 1
+function testConnectionAttempt(){
+    rc=${1}
+    message=${2}
+    if test ${rc} != 0 ; then
+        logerror ${message}
+        exit 1
 fi
-
+}
+#test connection
+if $( ${skipInitialTest}) ; then
+    timeout 10 bash -c "</dev/tcp/${ip}/${smtp_port}"
+    testConnectionAttempt $? "ERROR: ${ip}:${smtp_port} is not open!"
+fi
 vrfy_users="$@"
 debug "vrfy_users ${vrft_users}"
 debug "Opening smptp"
@@ -60,12 +86,9 @@ fi
 
 unset fd
 
-eval 'exec {fd}<>/dev/tcp/"${ip}"/"${smtp_port}"'  2>/dev/null
 
-if test $? != 0 ; then
-    logerror "ERROR: cannot open connection"
-   exit 1
-fi
+eval 'exec {fd}<>/dev/tcp/"${ip}"/"${smtp_port}"'  2>/dev/null
+testConnectionAttempt $? "ERROR: cannot open connection"
 
 
 function cleanup(){
@@ -76,6 +99,26 @@ debug "Shut down"
 exit
 }
 
+#return values used by readFD
+messageIn=""
+readSuccess=""
+function readFD(){
+    readSuccess=true
+    verb=${1}
+    read -t ${interval} -r messageIn <&$fd
+    if  [[ $? != 0  || ${messageIn^^} =~ "ERROR" ]]   ; then
+        echo "${verb} does not work on ${ip} ${smtp_port}"
+        readSuccess=false
+    fi
+    echo "${verb} response: ${ip} ${smtp_port} $messageIn"
+}
+
+function sendCommand(){
+    command_name=${1}
+    smtp_command=${2}
+    echo "${command_name} command: ${ip} ${smtp_port} ${smtp_command}"
+    echo -e "${smtp_command}"  >&$fd
+}
 debug "FD is $fd"
 
 if test -z "$fd" ; then
@@ -84,31 +127,21 @@ if test -z "$fd" ; then
 else
     echo "Connection established: ${ip} ${smtp_port}"
     trap "cleanup" HUP INT TERM EXIT QUIT
-    read  -t 120 -r messageIn <&$fd
-    if test $? != 0 ; then
-       logerror "ERROR: cannot open connection"
-       exit 1
-    fi
+    read  -t ${interval} -r messageIn <&$fd
+    testConnectionAttempt $? "ERROR: no incoming data from connection"
     echo "Received:: ${ip} ${smtp_port} $messageIn"
     VRFY=true
     EXPN=true
     for userName in ${users} ; do
-        echo "VRFY command: ${ip} ${smtp_port} VRFY ${userName}"
-        echo -e "VRFY ${userName}"  >&$fd
-        read -t 240 -r messageIn <&$fd
-        if test $? != 0 ; then
-           echo "VRFY does not work on ${ip} ${smtp_port}"
-           VRFY=false
-        fi
-        echo "VRFY response: ${ip} ${smtp_port} $messageIn"
+        sendCommand "VRFY" "VRFY ${userName}${domain}"
+        readFD "VRFY"
+        VRFY=${readSuccess}
 
-        echo -e "EXPN ${userName}"  >&$fd
-        read -t 240 -r messageIn <&$fd
-        if test $? != 0 ; then
-           echo "EXPN does not work on ${ip} ${smtp_port}"
-           EXPN=false
-        fi
-        echo "EXPN response: ${ip} ${smtp_port} $messageIn"
+        #NOTE: username isn't strictly the right wording for EXPN
+        sendCommand "EXPN" "EXPN ${userName}"
+        readFD "EXPN"
+        EXPN=${readSuccess}
+
         if $(! ${EXPN})  &&  $(! ${VRFY}) ; then
             echo "EXPN and VRFY do not work"
             exit
