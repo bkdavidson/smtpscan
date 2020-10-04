@@ -96,7 +96,7 @@ else
         echo "VRFY command: ${ip} ${smtp_port} VRFY ${userName}"
         echo -e "VRFY ${userName}"  >&$fd
         read -t 240 -r messageIn <&$fd
-        if test $? != 0 ; then
+        if  [[ $? != 0  || ${messageIn^^} =~ "ERROR" ]]   ; then
            echo "VRFY does not work on ${ip} ${smtp_port}"
            VRFY=false
         fi
@@ -104,7 +104,7 @@ else
 
         echo -e "EXPN ${userName}"  >&$fd
         read -t 240 -r messageIn <&$fd
-        if test $? != 0 ; then
+        if  [[ $? != 0  || ${messageIn^^} =~ "ERROR" ]]   ; then
            echo "EXPN does not work on ${ip} ${smtp_port}"
            EXPN=false
         fi
