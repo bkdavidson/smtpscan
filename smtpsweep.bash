@@ -3,7 +3,7 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 . ${DIR}/common.bash
 function usage(){
-    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -z [flag for wordlist is compressed targz] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode]"
+    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -z [flag for wordlist is compressed targz] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode] [-S skip initial connection attempt for dev only]"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com test admin root username1"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.gz -z"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.txt"
@@ -13,7 +13,8 @@ users=root
 smtp_port=25
 compressed=false
 fileopencommand="cat"
-while getopts "i:s:dw:za:" o; do
+skipInitialTest=false
+while getopts "i:s:dw:za:S" o; do
     case "${o}" in
         i)
             ip="${OPTARG}"
@@ -32,6 +33,10 @@ while getopts "i:s:dw:za:" o; do
             ;;
         z) 
             fileopencommand="zcat"
+            ;;
+        S)
+            #option for dev purposes only
+            skipInitialTest=true
             ;;
         *)
             usage
@@ -58,8 +63,10 @@ function testConnectionAttempt(){
 fi
 }
 #test connection
-timeout 10 bash -c "</dev/tcp/${ip}/${smtp_port}"
-testConnectionAttempt $? "ERROR: ${ip}:${smtp_port} is not open!"
+if $( ${skipInitialTest}) ; then
+    timeout 10 bash -c "</dev/tcp/${ip}/${smtp_port}"
+    testConnectionAttempt $? "ERROR: ${ip}:${smtp_port} is not open!"
+fi
 vrfy_users="$@"
 debug "vrfy_users ${vrft_users}"
 debug "Opening smptp"
@@ -95,6 +102,13 @@ function readFD(){
     fi
     echo "${verb} response: ${ip} ${smtp_port} $messageIn"
 }
+
+function sendCommand(){
+    command_name=${1}
+    smtp_command=${2}
+    echo "${command_name} command: ${ip} ${smtp_port} ${smtp_command}"
+    echo -e "${smtp_command}"  >&$fd
+}
 debug "FD is $fd"
 
 if test -z "$fd" ; then
@@ -109,13 +123,12 @@ else
     VRFY=true
     EXPN=true
     for userName in ${users} ; do
-        echo "VRFY command: ${ip} ${smtp_port} VRFY ${userName}${domain}"
-        echo -e "VRFY ${userName}${domain}"  >&$fd
+        sendCommand "VRFY" "VRFY ${userName}${domain}"
         readFD "VRFY"
         VRFY=${readSuccess}
 
         #NOTE: username isn't strictly the right wording for EXPN
-        echo -e "EXPN ${userName}"  >&$fd
+        sendCommand "EXPN" "EXPN ${userName}"
         readFD "EXPN"
         EXPN=${readSuccess}
 
