@@ -90,7 +90,7 @@ debug "Shut down"
 exit
 }
 
-#return values user later on
+#return values used by readFD
 messageIn=""
 readSuccess=""
 function readFD(){
