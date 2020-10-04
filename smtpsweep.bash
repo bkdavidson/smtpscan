@@ -43,9 +43,9 @@ if [ ! "${ip}" ] ; then
 fi
 shift $((OPTIND-1))
 
-if [ $(nmap -p ${smtp_port} ${ip} -sS -oG /dev/stdout | grep Host.*open | awk '{print $2}' | wc -l) -eq 1 ] ; then
-    debug "nmap detected ${ip}:${smtp_port} as open"
-else
+#test connection
+timeout 10 bash -c "</dev/tcp/${ip}/${smtp_port}"
+if test $? != 0 ; then
     logerror "ERROR: ${ip}:${smtp_port} is not open"
     exit 1
 fi
@@ -59,6 +59,7 @@ if [ ! -z "${vrfy_users}"  ] ; then
 fi
 
 unset fd
+
 
 eval 'exec {fd}<>/dev/tcp/"${ip}"/"${smtp_port}"'  2>/dev/null
 
