@@ -3,20 +3,26 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 . ${DIR}/common.bash
 function usage(){
-    echo "Usage: $0 -i <ip> -w [wordlist raw text] -z [flag for wordlist is compressed targz] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode]"
+    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -z [flag for wordlist is compressed targz] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode]"
+    echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com test admin root username1"
+    echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.gz -z"
+    echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.txt"
     exit 1
 }
 users=root
 smtp_port=25
 compressed=false
 fileopencommand="cat"
-while getopts "i:s:dw:z" o; do
+while getopts "i:s:dw:za:" o; do
     case "${o}" in
         i)
             ip="${OPTARG}"
             ;;
         s)
             smtp_port="${OPTARG}"
+            ;;
+        a)
+            domain="${OPTARG}"
             ;;
         d)
             debug=true
@@ -94,8 +100,8 @@ else
     VRFY=true
     EXPN=true
     for userName in ${users} ; do
-        echo "VRFY command: ${ip} ${smtp_port} VRFY ${userName}"
-        echo -e "VRFY ${userName}"  >&$fd
+        echo "VRFY command: ${ip} ${smtp_port} VRFY ${userName}${domain}"
+        echo -e "VRFY ${userName}${domain}"  >&$fd
         read -t 240 -r messageIn <&$fd
         if  [[ $? != 0  || ${messageIn^^} =~ "ERROR" ]]   ; then
            echo "VRFY does not work on ${ip} ${smtp_port}"
