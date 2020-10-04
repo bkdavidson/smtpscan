@@ -83,6 +83,18 @@ debug "Shut down"
 exit
 }
 
+#return values user later on
+messageIn=""
+readSuccess=""
+function readFD(){
+    verb=${1}
+    read -t 240 -r messageIn <&$fd
+    if  [[ $? != 0  || ${messageIn^^} =~ "ERROR" ]]   ; then
+        echo "${verb} does not work on ${ip} ${smtp_port}"
+        readSuccess=false
+    fi
+    echo "${verb} response: ${ip} ${smtp_port} $messageIn"
+}
 debug "FD is $fd"
 
 if test -z "$fd" ; then
@@ -102,20 +114,15 @@ else
     for userName in ${users} ; do
         echo "VRFY command: ${ip} ${smtp_port} VRFY ${userName}${domain}"
         echo -e "VRFY ${userName}${domain}"  >&$fd
-        read -t 240 -r messageIn <&$fd
-        if  [[ $? != 0  || ${messageIn^^} =~ "ERROR" ]]   ; then
-           echo "VRFY does not work on ${ip} ${smtp_port}"
-           VRFY=false
-        fi
-        echo "VRFY response: ${ip} ${smtp_port} $messageIn"
+        readFD "VRFY"
+        VRFY=${readSuccess}
 
+        #NOTE: username isn't strictly the right wording for EXPN
         echo -e "EXPN ${userName}"  >&$fd
-        read -t 240 -r messageIn <&$fd
-        if  [[ $? != 0  || ${messageIn^^} =~ "ERROR" ]]   ; then
-           echo "EXPN does not work on ${ip} ${smtp_port}"
-           EXPN=false
-        fi
-        echo "EXPN response: ${ip} ${smtp_port} $messageIn"
+        echo "test 2 ${readSuccess}"
+        readFD "EXPN"
+        EXPN=${readSuccess}
+
         if $(! ${EXPN})  &&  $(! ${VRFY}) ; then
             echo "EXPN and VRFY do not work"
             exit
