@@ -3,7 +3,7 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 . ${DIR}/common.bash
 function usage(){
-    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -z [flag for wordlist is compressed targz] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode] [-S skip initial connection attempt for dev only]"
+    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -f [fast most multi-thread wordlist] -z [flag for wordlist is compressed targz] -n [name for logging] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode] [-S skip initial connection attempt for dev only]"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com test admin root username1"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.gz -z"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.txt"
@@ -11,14 +11,16 @@ function usage(){
 }
 users=root
 smtp_port=25
-compressed=false
 fileopencommand="cat"
-skipInitialTest=false
 interval=240
-while getopts "i:s:dw:za:SI:" o; do
+moreCommands=""
+recurse=false
+name=main
+while getopts "i:s:dw:W:fza:I:n:" o; do
     case "${o}" in
         i)
             ip="${OPTARG}"
+            moreCommands+="-i ${ip} "
             ;;
         I)
             interval="${OPTARG}"
@@ -27,32 +29,39 @@ while getopts "i:s:dw:za:SI:" o; do
             else
                 echo "ERROR: -I should contain only digits" && exit 1
             fi
+            moreCommands+="-I ${interval} "
             ;;
         s)
             smtp_port="${OPTARG}"
+            moreCommands+="-s ${smtp_port} "
             ;;
         a)
             domain="${OPTARG}"
+            moreCommands+="-a ${domain} "
             ;;
         d)
             debug=true
+            moreCommands+="-d "
+            ;;
+        n)
+            name="${OPTARG}"
             ;;
         w)
             words="${OPTARG}"
             ;;
+        f)
+            recurse=true
+            ;;
         z) 
             fileopencommand="zcat"
-            ;;
-        S)
-            #option for dev purposes only
-            skipInitialTest=true
             ;;
         *)
             usage
             ;;
     esac
 done
-
+debug "${name}: ip=${ip} interval=${interval} smtp_port=${smtp_port} domain=${domain} debug=${debug} name=${name} words=${words} recurse=${recurse} fileopencommand=${fileopencommand}"
+debug "${name}: morecommands=${moreCommands}"
 if [ ! -f ${words} ] ; then
     logerror "File ${words} does not exist"
     usage
@@ -72,13 +81,11 @@ function testConnectionAttempt(){
 fi
 }
 #test connection
-if $( ${skipInitialTest}) ; then
-    timeout 10 bash -c "</dev/tcp/${ip}/${smtp_port}"
-    testConnectionAttempt $? "ERROR: ${ip}:${smtp_port} is not open!"
-fi
+timeout 10 bash -c "</dev/tcp/${ip}/${smtp_port}"
+testConnectionAttempt $? "ERROR: ${ip}:${smtp_port} is not open!"
 vrfy_users="$@"
-debug "vrfy_users ${vrft_users}"
-debug "Opening smptp"
+debug "${name}:  vrfy_users ${vrft_users}"
+debug "${name}: Opening smptp"
 
 if [ ! -z "${vrfy_users}"  ] ; then
     users=${vrfy_users}
@@ -89,14 +96,18 @@ unset fd
 
 eval 'exec {fd}<>/dev/tcp/"${ip}"/"${smtp_port}"'  2>/dev/null
 testConnectionAttempt $? "ERROR: cannot open connection"
-
+tmpoutdir=$(mktemp -d)
 
 function cleanup(){
-debug "Shutting down ${fd}"
-exec {fd}<&-
-exec {fd}>&-
-debug "Shut down"
-exit
+    debug "${name}: Shutting down ${fd}"
+    exec {fd}<&-
+    exec {fd}>&-
+    debug "${name}: Shut down"
+    rm -rf "${tmpoutdir}"
+    if [[ -n "$(jobs -pr)" ]] ; then
+        kill $(jobs -pr)
+    fi
+    exit
 }
 
 #return values used by readFD
@@ -107,66 +118,105 @@ function readFD(){
     verb=${1}
     read -t ${interval} -r messageIn <&$fd
     if  [[ $? != 0  || ${messageIn^^} =~ "ERROR" ]]   ; then
-        echo "${verb} does not work on ${ip} ${smtp_port}"
+        echo "${name}: ${verb} did not work on ${ip} ${smtp_port}"
         readSuccess=false
     fi
-    echo "${verb} response: ${ip} ${smtp_port} $messageIn"
+    echo "${name}: ${verb} response: ${ip} ${smtp_port} $messageIn"
 }
 
+reconnectCounter=0
 function sendCommand(){
     command_name=${1}
     smtp_command=${2}
-    echo "${command_name} command: ${ip} ${smtp_port} ${smtp_command}"
-    echo -e "${smtp_command}"  >&$fd
+    echo "${name}: ${command_name} command: ${ip} ${smtp_port} ${smtp_command}"
+    if ! echo -e "${smtp_command}"  >&$fd; then
+        #reconnect
+        reconnectCounter=$((reconnectCounter+1)) 
+        echo "${name} reconnecting ${ip} ${port} #${reconnectCounter}"
+        eval 'exec {fd}<>/dev/tcp/"${ip}"/"${smtp_port}"'  2>/dev/null
+        testConnectionAttempt $? "${name}: ERROR: cannot open connection after disconnect"
+        if test -z "$fd" ; then
+            logerror "${name} ERROR: Connection did not open"
+            exit 1
+        else
+            echo "${name}: Connection established: ${ip} ${smtp_port}"
+        fi
+        read  -t ${interval} -r messageIn <&$fd
+        testConnectionAttempt $? "ERROR: no incoming data from connection"
+        echo "${name} Received: ${ip} ${smtp_port} $messageIn"
+    fi
 }
-debug "FD is $fd"
+
+firstVRFYPass=true
+firstEXPNPass=true
+function try_EXPN_VRFY(){
+    userName=${1}
+    sendCommand "VRFY" "VRFY ${userName}${domain}"
+    readFD "VRFY"
+    if [[ "${firstVRFYPass}" = true ]]; then 
+        VRFY=${readSuccess}
+    fi
+    #NOTE: username isn't strictly the right wording for EXPN
+    sendCommand "EXPN" "EXPN ${userName}"
+    readFD "EXPN"
+    if [[ "${firstEXPNPass}" = true ]]; then 
+        EXPN=${readSuccess}
+    fi
+    firstVRFYPass=false
+    firstEXPNPass=false
+    if $(! ${EXPN})  &&  $(! ${VRFY}) ; then
+        echo "${name}: EXPN and VRFY do not work"
+        exit
+    fi
+}
+
+debug "${name}: FD is $fd"
 
 if test -z "$fd" ; then
     logerror "ERROR: Connection did not open"
     exit 1
 else
-    echo "Connection established: ${ip} ${smtp_port}"
+    echo "${name} Connection established: ${ip} ${smtp_port}"
     trap "cleanup" HUP INT TERM EXIT QUIT
     read  -t ${interval} -r messageIn <&$fd
     testConnectionAttempt $? "ERROR: no incoming data from connection"
-    echo "Received:: ${ip} ${smtp_port} $messageIn"
+    echo "${name} Received: ${ip} ${smtp_port} $messageIn"
     VRFY=true
     EXPN=true
     for userName in ${users} ; do
-        sendCommand "VRFY" "VRFY ${userName}${domain}"
-        readFD "VRFY"
-        VRFY=${readSuccess}
-
-        #NOTE: username isn't strictly the right wording for EXPN
-        sendCommand "EXPN" "EXPN ${userName}"
-        readFD "EXPN"
-        EXPN=${readSuccess}
-
-        if $(! ${EXPN})  &&  $(! ${VRFY}) ; then
-            echo "EXPN and VRFY do not work"
-            exit
-        fi
+        try_EXPN_VRFY "${userName}"
     done
     
-    if [ ! -z ${words}  ] ; then
+
+    if [[ ! -z ${words} && "${recurse}" = false ]] ; then
+        for userName in $(${fileopencommand} ${words}) ; do
+            try_EXPN_VRFY "${userName}"
+        done
+    fi
+
+    if [[ ! -z ${words} && "${recurse}" = true ]] ; then
         wordcount=$(${fileopencommand} ${words} | wc -l)
         if [ ${wordcount} -eq 0 ] ; then 
             logerror "Input file contained zero words"
         fi
-        wordsCounted=0
-        arraySize=$((  wordcount / 100 ))
-        declare -a nextWordList
+        firstPass=true
+        bucket=0
         for userName in $(${fileopencommand} ${words}) ; do
-            nextWordList[${wordsCounted}]=${userName}
-            wordsCounted=$((wordsCounted+1)) 
-            if [ ${wordsCounted} -eq 10 ] ; then
-                wordsCounted=0
-                debug "${DIR}/smtpsweep.bash -i ${ip} -s ${smtp_port} `for i in $( seq 0 ${#nextWordList[@]} ); do echo -n " ${nextWordList[i]}"; done`"
-                ${DIR}/smtpsweep.bash -i ${ip} -s ${smtp_port} `for i in $( seq 0 ${#nextWordList[@]} ); do echo -n " ${nextWordList[i]}"; done` &
-                unset nextWordList
-                declare -a nextWordList
+            bucket=$((bucket+1)) 
+            echo "${userName}" >> ${tmpoutdir}/${bucket}.words
+
+            if $( ${firstPass})  ; then
+                debug "${name} ${DIR}/smtpsweep.bash -w ${tmpoutdir}/${bucket}.words ${moreCommands} -n child-${bucket}"
+                ${DIR}/smtpsweep.bash -w "${tmpoutdir}"/"${bucket}".words ${moreCommands} -n "child-${bucket}" &
+            fi
+            if [ ${bucket} -eq 10 ] ; then
+                bucket=0
+                firstPass=false
             fi;
         done
+        debug "${name} Word list buckets done"
     fi
+    debug "${name} Waiting on child processes to complete."
+    wait
     exit
 fi
