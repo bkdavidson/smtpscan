@@ -16,7 +16,8 @@ interval=240
 moreCommands=""
 recurse=false
 name=main
-while getopts "i:s:dw:W:fza:I:n:" o; do
+skipFirstConnect=false
+while getopts "i:s:dw:W:fza:I:n:S" o; do
     case "${o}" in
         i)
             ip="${OPTARG}"
@@ -55,6 +56,9 @@ while getopts "i:s:dw:W:fza:I:n:" o; do
         z) 
             fileopencommand="zcat"
             ;;
+        S)
+            skipFirstConnect=false
+            ;;
         *)
             usage
             ;;
@@ -81,8 +85,11 @@ function testConnectionAttempt(){
 fi
 }
 #test connection
-timeout 10 bash -c "</dev/tcp/${ip}/${smtp_port}"
-testConnectionAttempt $? "ERROR: ${ip}:${smtp_port} is not open!"
+
+if $( ${skipFirstConnect}) ; then
+    timeout 10 bash -c "</dev/tcp/${ip}/${smtp_port}"
+    testConnectionAttempt $? "ERROR: ${ip}:${smtp_port} is not open!"
+fi
 vrfy_users="$@"
 debug "${name}:  vrfy_users ${vrft_users}"
 debug "${name}: Opening smptp"
