@@ -1,15 +1,13 @@
-#########################
 # What is  smtpsweeper? #
-########################
 
 This is a proof of concept program that demonstrates how to utilize /dev/tcp with bash.
 This tool can test smtp VRFY and EXPN commands against poorly configured smtp servers. You can send specific accounts to check, or send a wordlist to be done in parallel.
 See usage for more details on how to use it.
 
 
-##############
+
 # LAB SETUP  #
-##############
+
 vm setup: https://linuxhint.com/install_ubuntu_vmware_workstation/
 install net-tools
 
