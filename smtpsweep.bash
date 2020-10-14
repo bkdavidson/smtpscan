@@ -3,7 +3,7 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 . ${DIR}/common.bash
 function usage(){
-    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -f [fast most multi-thread wordlist] -r [rate per second] -z [flag for wordlist is compressed targz] -n [name for logging] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode] [-S skip initial connection attempt for dev only]"
+    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -f [fast most multi-thread wordlist] -z [flag for wordlist is compressed targz] -n [name for logging] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode] [-S skip initial connection attempt for dev only]"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com test admin root username1"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.gz -z"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.txt"
@@ -104,7 +104,7 @@ unset fd
 eval 'exec {fd}<>/dev/tcp/"${ip}"/"${smtp_port}"'  2>/dev/null
 testConnectionAttempt $? "ERROR: cannot open connection"
 tmpoutdir=$(mktemp -d)
-
+attempts=0
 function cleanup(){
     debug "${name}: Shutting down ${fd}"
     exec {fd}<&-
@@ -113,6 +113,11 @@ function cleanup(){
     rm -rf "${tmpoutdir}"
     if [[ -n "$(jobs -pr)" ]] ; then
         kill $(jobs -pr)
+    fi
+    if [[ ! -z ${words} && "${recurse}" = false ]] ; then
+        echo "${name}: ${attempts} words attempted in ${SECONDS} seconds - now exiting"
+    else
+        echo "${name}: exiting after ${SECONDS} seconds"
     fi
     exit
 }
@@ -139,7 +144,7 @@ function sendCommand(){
     if ! echo -e "${smtp_command}"  >&$fd; then
         #reconnect
         reconnectCounter=$((reconnectCounter+1)) 
-        echo "${name} reconnecting ${ip} ${port} #${reconnectCounter}"
+        echo "${name}: ${attempts} words attempted in ${SECONDS} seconds - now reconnecting ${ip} ${port} #${reconnectCounter}"
         eval 'exec {fd}<>/dev/tcp/"${ip}"/"${smtp_port}"'  2>/dev/null
         testConnectionAttempt $? "${name}: ERROR: cannot open connection after disconnect"
         if test -z "$fd" ; then
@@ -161,6 +166,7 @@ VRFY=true
 EXPN=true
 function try_EXPN_VRFY(){
     userName=${1}
+    attempts=$((attempts+1)) 
     if $( ${VRFY}) ; then
         sendCommand "VRFY" "VRFY ${userName}${domain}"
         readFD "VRFY"
