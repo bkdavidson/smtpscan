@@ -144,23 +144,30 @@ function sendCommand(){
         read  -t ${interval} -r messageIn <&$fd
         testConnectionAttempt $? "ERROR: no incoming data from connection"
         echo "${name} Received: ${ip} ${smtp_port} $messageIn"
+        sendCommand "${1}" "${2}"
     fi
 }
 
 firstVRFYPass=true
 firstEXPNPass=true
+VRFY=true
+EXPN=true
 function try_EXPN_VRFY(){
     userName=${1}
-    sendCommand "VRFY" "VRFY ${userName}${domain}"
-    readFD "VRFY"
-    if [[ "${firstVRFYPass}" = true ]]; then 
-        VRFY=${readSuccess}
+    if $( ${VRFY}) ; then
+        sendCommand "VRFY" "VRFY ${userName}${domain}"
+        readFD "VRFY"
+        if [[ "${firstVRFYPass}" = true ]]; then 
+            VRFY=${readSuccess}
+        fi
     fi
     #NOTE: username isn't strictly the right wording for EXPN
-    sendCommand "EXPN" "EXPN ${userName}"
-    readFD "EXPN"
-    if [[ "${firstEXPNPass}" = true ]]; then 
-        EXPN=${readSuccess}
+    if $( ${EXPN}) ; then
+        sendCommand "EXPN" "EXPN ${userName}"
+        readFD "EXPN"
+        if [[ "${firstEXPNPass}" = true ]]; then 
+            EXPN=${readSuccess}
+        fi
     fi
     firstVRFYPass=false
     firstEXPNPass=false
@@ -181,8 +188,6 @@ else
     read  -t ${interval} -r messageIn <&$fd
     testConnectionAttempt $? "ERROR: no incoming data from connection"
     echo "${name} Received: ${ip} ${smtp_port} $messageIn"
-    VRFY=true
-    EXPN=true
     for userName in ${users} ; do
         try_EXPN_VRFY "${userName}"
     done
