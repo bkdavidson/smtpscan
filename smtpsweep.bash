@@ -241,7 +241,7 @@ else
         done
         debug "${name} Word list buckets done"
         debug "${name} Waiting on child processes to complete."
-    wait
+        wait
     fi
     exit
 fi
