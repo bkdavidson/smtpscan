@@ -3,7 +3,7 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 
 . ${DIR}/common.bash
 function usage(){
-    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -f [fast most multi-thread wordlist] -z [flag for wordlist is compressed targz] -n [name for logging] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode] [-S skip initial connection attempt for dev only]"
+    echo "Usage: $0 -i <ip> -a [domain suffix] -w [wordlist raw text] -f [fast most multi-thread wordlist] -r [rate per second] -z [flag for wordlist is compressed targz] -n [name for logging] [-s smptp port - default is 25] [username1 username2  ... usernameN - default is root] [-d debug mode] [-S skip initial connection attempt for dev only]"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com test admin root username1"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.gz -z"
     echo "Example: smtpsweep.bash -i 127.0.0.1 -a @test.com -w /tmp/rockyou.txt"
@@ -201,9 +201,16 @@ else
     
 
     if [[ ! -z ${words} && "${recurse}" = false ]] ; then
-        for userName in $(${fileopencommand} ${words}) ; do
-            try_EXPN_VRFY "${userName}"
-        done
+        if [[ "${fileopencommand}" = cat ]] ; then
+            while read -t 5 userName
+            do
+                try_EXPN_VRFY "${userName}"
+            done < ${words}
+        else
+            for userName in $(${fileopencommand} ${words}) ; do
+                try_EXPN_VRFY "${userName}"
+            done
+        fi
     fi
 
     if [[ ! -z ${words} && "${recurse}" = true ]] ; then
@@ -227,8 +234,8 @@ else
             fi;
         done
         debug "${name} Word list buckets done"
-    fi
-    debug "${name} Waiting on child processes to complete."
+        debug "${name} Waiting on child processes to complete."
     wait
+    fi
     exit
 fi
