@@ -15,7 +15,7 @@ docker setup: https://fabianlee.org/2019/09/28/docker-installing-docker-ce-on-ub
 
 mail setup: https://fabianlee.org/2019/10/23/docker-running-a-postfix-container-for-testing-mail-during-development/
 
-1.get a shell
+1. get a shell
 docker container exec -it mail /bin/bash
 
 
